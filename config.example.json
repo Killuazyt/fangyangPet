@@ -1,0 +1,18 @@
+{
+  "host": "",
+  "port": 22,
+  "username": "",
+  "auth_method": "key",
+  "identity_file": "",
+  "spritesheet_path": "spritesheet.webp",
+  "poll_interval_seconds": 30,
+  "ssh_connect_timeout_seconds": 8,
+  "idle_util_threshold": 5,
+  "idle_memory_threshold_mb": 512,
+  "idle_state": "idle",
+  "active_state": "idle",
+  "error_state": "failed",
+  "animation_ms": 500,
+  "bubble_repeat_seconds": 300,
+  "window_scale": 0.5
+}
