@@ -1,3 +1,5 @@
+# 纪念和基哥一起2人一张卡跑实验的日子
+
 # GPU Rowlet Monitor
 
 独立 Windows 桌宠，复用 `D:\Project\Pet\rowlet\spritesheet.webp`，通过 SSH 查询 Ubuntu 服务器的 NVIDIA GPU 状态。只要任意一张卡空闲，Rowlet 会切到配置的打瞌睡状态并弹出气泡说明哪些 GPU 空闲。
