@@ -94,6 +94,7 @@ class RowletApp:
         self.last_bubble_at = 0.0
         self.bubble: tk.Toplevel | None = None
         self.bubble_label: tk.Label | None = None
+        self.bubble_hide_after_id: str | None = None
         self.context_menu: tk.Toplevel | None = None
         self.settings_dialog: SettingsDialog | None = None
         self.status_dialog: StatusDialog | None = None
@@ -196,7 +197,7 @@ class RowletApp:
             now = time.monotonic()
             should_repeat = now - self.last_bubble_at >= self.config.bubble_repeat_seconds
             if idle_tuple != self.last_idle_indices or should_repeat:
-                self._show_bubble(status.bubble_message(), force=idle_tuple != self.last_idle_indices)
+                self._show_bubble(status.bubble_message(), force=idle_tuple != self.last_idle_indices, duration_ms=None)
                 self.last_idle_indices = idle_tuple
                 self.last_bubble_at = now
         else:
@@ -227,9 +228,10 @@ class RowletApp:
         self.image_label.image = frame
         self.frame_index += 1
 
-    def _show_bubble(self, text: str, force: bool = False) -> None:
+    def _show_bubble(self, text: str, force: bool = False, duration_ms: int | None = 7000) -> None:
         if self.bubble is not None and force:
             self._hide_bubble()
+        self._cancel_bubble_hide()
         if self.bubble is None:
             self.bubble = tk.Toplevel(self.root)
             self.bubble.overrideredirect(True)
@@ -251,16 +253,32 @@ class RowletApp:
         elif self.bubble_label is not None:
             self.bubble_label.configure(text=text)
 
+        self._position_bubble()
+        self.bubble.deiconify()
+        if duration_ms is not None:
+            self.bubble_hide_after_id = self.root.after(duration_ms, self._hide_bubble)
+
+    def _position_bubble(self) -> None:
+        if self.bubble is None:
+            return
         self.root.update_idletasks()
         x = self.root.winfo_x() - 20
         y = max(0, self.root.winfo_y() - self.bubble.winfo_reqheight() - 8)
         self.bubble.geometry(f"+{x}+{y}")
-        self.bubble.deiconify()
-        self.root.after(7000, self._hide_bubble)
 
     def _hide_bubble(self) -> None:
+        self._cancel_bubble_hide()
         if self.bubble is not None:
             self.bubble.withdraw()
+
+    def _cancel_bubble_hide(self) -> None:
+        if self.bubble_hide_after_id is None:
+            return
+        try:
+            self.root.after_cancel(self.bubble_hide_after_id)
+        except tk.TclError:
+            pass
+        self.bubble_hide_after_id = None
 
     def _bind_drag(self) -> None:
         def start(event: tk.Event) -> None:
@@ -272,7 +290,6 @@ class RowletApp:
             self.drag_animation_ms = SLOW_DRAG_ANIMATION_MS
             self.dragging = True
             self.frame_index = 0
-            self._hide_bubble()
             self._draw_next_frame()
 
         def drag(event: tk.Event) -> None:
@@ -291,7 +308,7 @@ class RowletApp:
             y = self.root.winfo_pointery() - self._drag_start_y
             self.root.geometry(f"+{x}+{y}")
             if self.bubble is not None:
-                self._hide_bubble()
+                self._position_bubble()
 
         def end(_event: tk.Event) -> None:
             if self.dragging:
