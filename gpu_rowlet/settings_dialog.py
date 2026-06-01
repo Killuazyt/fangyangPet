@@ -45,7 +45,8 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, config: AppConfig, config_path: Path, on_saved) -> None:
         super().__init__(parent)
         self.title(TEXT_TITLE)
-        self.resizable(True, False)
+        self.resizable(True, True)
+        self.minsize(620, 480)
         self.transient(parent)
         self.grab_set()
 
@@ -58,25 +59,41 @@ class SettingsDialog(tk.Toplevel):
         self.username_var = tk.StringVar(value=config.username)
         self.auth_method_var = tk.StringVar(value=config.auth_method)
         self.identity_file_var = tk.StringVar(value=str(config.identity_file or ""))
-        self.password_var = tk.StringVar(value="")
         self.show_password_var = tk.BooleanVar(value=False)
         self.poll_var = tk.StringVar(value=str(config.poll_interval_seconds))
         self.util_var = tk.StringVar(value=str(config.idle_util_threshold))
         self.memory_var = tk.StringVar(value=str(config.idle_memory_threshold_mb))
         self.status_var = tk.StringVar(value=TEXT_PASSWORD_HINT)
         self.entries: list[ttk.Entry] = []
+        self._credential_check_token = 0
 
         self._build()
         self._sync_auth_controls()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.bind("<Escape>", lambda _event: self.destroy())
-        self.bind("<Return>", lambda _event: self._save())
+        self.bind("<Control-Return>", lambda _event: self._save())
+        self.bind("<MouseWheel>", self._on_mousewheel)
         self.after(50, self._present)
 
     def _build(self) -> None:
-        outer = ttk.Frame(self, padding=14)
-        outer.grid(row=0, column=0, sticky="nsew")
         self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        scroll_host = ttk.Frame(self)
+        scroll_host.grid(row=0, column=0, sticky="nsew")
+        scroll_host.columnconfigure(0, weight=1)
+        scroll_host.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(scroll_host, borderwidth=0, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(scroll_host, orient="vertical", command=self.canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        outer = ttk.Frame(self.canvas, padding=(14, 12, 14, 8))
+        self.content_window = self.canvas.create_window((0, 0), window=outer, anchor="nw")
+        outer.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_content)
         outer.columnconfigure(0, weight=1)
 
         ttk.Label(outer, text=TEXT_SERVER).grid(row=0, column=0, sticky="w")
@@ -106,7 +123,7 @@ class SettingsDialog(tk.Toplevel):
         password_frame = ttk.Frame(form)
         password_frame.grid(row=5, column=1, sticky="ew", pady=4)
         password_frame.columnconfigure(0, weight=1)
-        self.password_entry = ttk.Entry(password_frame, textvariable=self.password_var, width=42, show="*")
+        self.password_entry = ttk.Entry(password_frame, width=42, show="*")
         self.password_entry.grid(row=0, column=0, sticky="ew")
         self._register_entry(self.password_entry)
         ttk.Checkbutton(
@@ -124,10 +141,14 @@ class SettingsDialog(tk.Toplevel):
         self._entry(monitor, TEXT_IDLE_UTIL, self.util_var, 1, width=10)
         self._entry(monitor, TEXT_IDLE_MEMORY, self.memory_var, 2, width=10)
 
-        ttk.Label(outer, textvariable=self.status_var, foreground="#555", wraplength=560).grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        ttk.Separator(self).grid(row=1, column=0, sticky="ew")
+        footer = ttk.Frame(self, padding=(14, 8, 14, 12))
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self.status_var, foreground="#555", wraplength=620).grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        buttons = ttk.Frame(outer)
-        buttons.grid(row=6, column=0, sticky="e")
+        buttons = ttk.Frame(footer)
+        buttons.grid(row=1, column=0, sticky="e")
         self.test_button = ttk.Button(buttons, text=TEXT_TEST, command=self._test_connection)
         self.test_button.pack(side="left", padx=(0, 8))
         self.save_button = ttk.Button(buttons, text=TEXT_SAVE, command=self._save)
@@ -146,21 +167,54 @@ class SettingsDialog(tk.Toplevel):
         self.entries.append(entry)
         bind_entry_select_all(entry)
 
+    def _update_scroll_region(self, _event: tk.Event) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_content(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self.content_window, width=event.width)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        if self.canvas.bbox("all") is None:
+            return
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
     def _sync_auth_controls(self) -> None:
         use_key = self.auth_method_var.get() == "key"
         self.key_entry.configure(state="normal" if use_key else "disabled")
         self.browse_button.configure(state="normal" if use_key else "disabled")
         self.password_entry.configure(state="disabled" if use_key else "normal")
         self._sync_password_visibility()
-        if not use_key:
+        if use_key:
+            self.status_var.set(TEXT_PASSWORD_HINT)
+        else:
+            self.status_var.set(TEXT_PASSWORD_HINT)
+            self._check_saved_password_async()
+
+    def _check_saved_password_async(self) -> None:
+        self._credential_check_token += 1
+        token = self._credential_check_token
+        try:
+            config = self._config_from_fields(allow_missing_password=True)
+        except Exception:
+            return
+        if not config.host or not config.username:
+            return
+
+        def worker() -> None:
             try:
-                config = self._config_from_fields(allow_missing_password=True)
-                if get_password(config.credential_service, config.credential_key):
-                    self.status_var.set(TEXT_PASSWORD_SAVED)
-                else:
-                    self.status_var.set(TEXT_PASSWORD_HINT)
+                has_password = bool(get_password(config.credential_service, config.credential_key))
             except Exception:
-                self.status_var.set(TEXT_PASSWORD_HINT)
+                has_password = False
+            self.after(0, lambda: self._finish_saved_password_check(token, has_password))
+
+        threading.Thread(target=worker, name="credential-check", daemon=True).start()
+
+    def _finish_saved_password_check(self, token: int, has_password: bool) -> None:
+        if not self.winfo_exists() or token != self._credential_check_token:
+            return
+        if self.auth_method_var.get() != "password":
+            return
+        self.status_var.set(TEXT_PASSWORD_SAVED if has_password else TEXT_PASSWORD_HINT)
 
     def _sync_password_visibility(self) -> None:
         if self.auth_method_var.get() == "key":
@@ -244,7 +298,7 @@ class SettingsDialog(tk.Toplevel):
             return
         if not config.host or not config.username:
             return
-        password = self.password_var.get()
+        password = self.password_entry.get()
         if password:
             set_password(config.credential_service, config.credential_key, password)
             return
@@ -252,7 +306,11 @@ class SettingsDialog(tk.Toplevel):
             raise ValueError("\u4f7f\u7528\u8d26\u53f7\u5bc6\u7801\u767b\u5f55\u65f6\u9700\u8981\u8f93\u5165\u5bc6\u7801\u3002\u5bc6\u7801\u4f1a\u4fdd\u5b58\u5230 Windows \u51ed\u636e\u5e93\uff0c\u4e0d\u4f1a\u5199\u5165 config.json\u3002")
 
     def _present(self) -> None:
-        center_on_screen(self, width=680, height=self.winfo_reqheight())
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        width = min(760, max(620, screen_width - 80))
+        height = min(600, max(480, screen_height - 100))
+        center_on_screen(self, width=width, height=height)
         lift_temporarily(self)
         if self.auth_method_var.get() == "password":
             self.password_entry.focus_set()
