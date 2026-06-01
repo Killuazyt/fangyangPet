@@ -192,11 +192,11 @@ class RowletApp:
         if status.any_idle:
             self.sleep_bubble_active = True
             self._set_state(self.config.active_state)
-            self._hide_bubble()
             idle_tuple = tuple(status.idle_indices)
             now = time.monotonic()
             should_repeat = now - self.last_bubble_at >= self.config.bubble_repeat_seconds
             if idle_tuple != self.last_idle_indices or should_repeat:
+                self._show_bubble(status.bubble_message(), force=idle_tuple != self.last_idle_indices)
                 self.last_idle_indices = idle_tuple
                 self.last_bubble_at = now
         else:
@@ -514,8 +514,10 @@ def add_sleep_effect(frame: Image.Image, frame_index: int, scale: float) -> Imag
     width, height = result.size
     phase = frame_index % 4
     radius = max(5, int((8 + phase * 2) * scale / 0.5))
+    draw_sleepy_mouth(draw, width, height, scale, phase)
+
     cx = int(width * 0.64)
-    cy = int(height * 0.31) - int(phase * 1.5)
+    cy = int(height * 0.30) - int(phase * 1.2)
     ellipse = (cx - radius, cy - radius, cx + radius, cy + radius)
 
     # The reference images use a pale blue sleep bubble attached near Rowlet's beak.
@@ -536,7 +538,6 @@ def add_sleep_effect(frame: Image.Image, frame_index: int, scale: float) -> Imag
         (cx - radius // 5, cy + radius // 2),
     ]
     draw.polygon(neck, fill=(185, 242, 246, 160), outline=(113, 207, 216, 180))
-    draw_sleepy_eyes(draw, width, height, scale, phase)
     return result
 
 
@@ -550,14 +551,23 @@ def make_sleepy_pose(frame: Image.Image, frame_index: int) -> Image.Image:
     return shifted
 
 
-def draw_sleepy_eyes(draw: ImageDraw.ImageDraw, width: int, height: int, scale: float, phase: int) -> None:
-    line_width = max(2, int(3 * scale / 0.5))
-    y = int(height * 0.37) + (1 if phase in {1, 2} else 0)
-    left = (int(width * 0.32), y - 2, int(width * 0.48), y + 9)
-    right = (int(width * 0.54), y - 2, int(width * 0.70), y + 9)
-    color = (42, 42, 42, 235)
-    draw.arc(left, start=15, end=165, fill=color, width=line_width)
-    draw.arc(right, start=15, end=165, fill=color, width=line_width)
+def draw_sleepy_mouth(draw: ImageDraw.ImageDraw, width: int, height: int, scale: float, phase: int) -> None:
+    line_width = max(1, int(2 * scale / 0.5))
+    bob = 1 if phase in {1, 2} else 0
+    mouth = (
+        int(width * 0.485),
+        int(height * 0.405) + bob,
+        int(width * 0.555),
+        int(height * 0.485) + bob,
+    )
+    draw.ellipse(mouth, fill=(72, 45, 41, 230), outline=(112, 74, 42, 220), width=line_width)
+    tongue = (
+        int(width * 0.495),
+        int(height * 0.445) + bob,
+        int(width * 0.555),
+        int(height * 0.500) + bob,
+    )
+    draw.pieslice(tongue, start=0, end=180, fill=(235, 124, 51, 235))
 
 
 def drag_state_for_delta(delta_x: int, current_state: str) -> str:
